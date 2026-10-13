@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #00a2e8;
+  --color-secondary: #ffde00;
+  --color-accent: #0f172a;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+}
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@700;800&display=swap');
+
+body {
+  @apply bg-slate-50 text-slate-900 transition-colors duration-300;
+  font-family: var(--font-sans);
+}
+
+.dark body {
+  @apply bg-slate-950 text-slate-100;
+}
+
+.modern-card {
+  @apply bg-white rounded-[2rem] shadow-sm border border-slate-100 transition-all duration-300;
+}
+
+.dark .modern-card {
+  @apply bg-slate-900 border-slate-800 shadow-none;
+}
+
+.glass-nav {
+  @apply bg-white/85 backdrop-blur-xl border-t border-white/30 transition-all duration-300;
+}
+
+.dark .glass-nav {
+  @apply bg-slate-900/80 border-t border-slate-800;
+}
+
+
+.nav-active-indicator {
+  position: absolute;
+  bottom: -4px;
+  width: 4px;
+  height: 4px;
+  background: var(--color-primary);
+  border-radius: 50%;
+}
+
+.primary-gradient {
+  background: linear-gradient(135deg, #00a2e8 0%, #007bb1 100%);
+}
+
+.secondary-gradient {
+  background: linear-gradient(135deg, #ffde00 0%, #facc15 100%);
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 20px;
+}
+

@@ -1,0 +1,15 @@
+{
+  "name": "Célula Despertar",
+  "description": "Aplicativo moderno e vibrante para gestão de células bíblicas com calendário, chat, blog, devocionais e quizzes interativos.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API",
+    "Real-time Chat",
+    "Community Blog",
+    "Bible Quizzes",
+    "Event Management"
+  ]
+}
