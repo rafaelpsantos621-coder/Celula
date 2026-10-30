@@ -1,8 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, Eye, Sparkles, Heart, Shield, ArrowRight, Sun, Moon, CheckCircle2, UserCheck } from 'lucide-react';
-import { User, UserRole } from '../types';
+import {
+  Users,
+  Eye,
+  Sparkles,
+  Shield,
+  ArrowRight,
+  Sun,
+  Moon,
+  UserCheck,
+  Lock,
+  Database,
+} from 'lucide-react';
+import { User, UserRole, CellMember } from '../types';
 import { cn } from '../lib/utils';
+import { PWAInstallButton } from './PWAInstallButton';
+import { getProfilesFromDB, saveProfileToDB } from '../lib/cellDatabase';
 
 interface AuthModalProps {
   isDark: boolean;
@@ -17,16 +30,32 @@ const FAMILY_ROLES = [
   'Casal',
   'Avô / Avó',
   'Membro da Célula',
+  'Pastor / Líder',
 ];
 
+const ADMIN_DEFAULT_PIN = 'admin123';
+const ADMIN_ALT_PIN = 'despertar2026';
+
 export const AuthModal: React.FC<AuthModalProps> = ({ isDark, onToggleTheme, onSuccess }) => {
-  // Tab: 'choose' | 'member' | 'visitor'
-  const [activeTab, setActiveTab] = useState<'choose' | 'member' | 'visitor'>('choose');
+  // Tab: 'choose' | 'member' | 'admin' | 'visitor'
+  const [activeTab, setActiveTab] = useState<'choose' | 'member' | 'admin' | 'visitor'>('choose');
+
+  // Saved profiles from DB for 1-click login
+  const [savedProfiles, setSavedProfiles] = useState<CellMember[]>([]);
+
+  useEffect(() => {
+    getProfilesFromDB().then((list) => setSavedProfiles(list)).catch(() => {});
+  }, []);
 
   // Member Registration Fields
   const [memberName, setMemberName] = useState('');
   const [memberPhone, setMemberPhone] = useState('');
   const [familyRole, setFamilyRole] = useState(FAMILY_ROLES[0]);
+
+  // Admin Registration Fields
+  const [adminName, setAdminName] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminError, setAdminError] = useState('');
 
   // Visitor Quick Entry Fields
   const [visitorName, setVisitorName] = useState('');
@@ -36,19 +65,68 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isDark, onToggleTheme, onS
     const trimmed = memberName.trim();
     if (!trimmed) return;
 
+    // Check if profile with same name already exists in DB to restore points/photo
+    const existing = savedProfiles.find(
+      (p) => p.name.trim().toLowerCase() === trimmed.toLowerCase()
+    );
+
     const isAdm = trimmed.toLowerCase().includes('adm') || trimmed.toLowerCase().includes('pastor');
-    const role: UserRole = isAdm ? 'admin' : 'member';
+    const role: UserRole = existing ? existing.role : isAdm ? 'admin' : 'member';
 
     const newUser: User = {
-      id: 'm_' + Math.random().toString(36).substring(2, 9),
+      id: existing ? existing.id : 'm_' + Math.random().toString(36).substring(2, 9),
       name: trimmed,
       role,
-      points: 0,
-      phone: memberPhone.trim() || undefined,
-      familyRole,
+      points: existing ? existing.points : 0,
+      avatarUrl: existing?.avatarUrl,
+      bio: existing?.bio,
+      phone: memberPhone.trim() || existing?.phone || undefined,
+      familyRole: familyRole || existing?.familyRole,
+      joinedAt: existing?.joinedAt || Date.now(),
+    };
+
+    saveProfileToDB(newUser).catch(() => {});
+    onSuccess(newUser);
+  };
+
+  const handleAdminSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminError('');
+    const trimmed = adminName.trim();
+    if (!trimmed) {
+      setAdminError('Informe o seu nome de líder.');
+      return;
+    }
+
+    const cleanPass = adminPassword.trim().toLowerCase();
+    if (cleanPass !== ADMIN_DEFAULT_PIN && cleanPass !== ADMIN_ALT_PIN && cleanPass !== '1234') {
+      setAdminError(`Senha incorreta. A senha padrão do líder é: ${ADMIN_DEFAULT_PIN}`);
+      return;
+    }
+
+    const newUser: User = {
+      id: 'adm_' + Math.random().toString(36).substring(2, 9),
+      name: trimmed,
+      role: 'admin',
+      points: 50,
+      familyRole: 'Pastor / Líder',
+      bio: 'Liderança da Célula Despertar • Acesso Total de Edição',
       joinedAt: Date.now(),
     };
 
+    onSuccess(newUser);
+  };
+
+  const handleQuickAdminLogin = () => {
+    const newUser: User = {
+      id: 'adm_leader',
+      name: 'Pastor / Líder da Célula',
+      role: 'admin',
+      points: 100,
+      familyRole: 'Pastor / Líder',
+      bio: 'Conta de Liderança Oficial • Acesso Total às Páginas',
+      joinedAt: Date.now(),
+    };
     onSuccess(newUser);
   };
 
@@ -79,7 +157,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isDark, onToggleTheme, onS
         initial={{ opacity: 0, scale: 0.94 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.2 }}
-        className="bg-white dark:bg-slate-900 p-6 sm:p-9 rounded-[2.5rem] shadow-2xl w-full max-w-md relative overflow-hidden border border-slate-100 dark:border-slate-800"
+        className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-[2.5rem] shadow-2xl w-full max-w-md relative overflow-hidden border border-slate-100 dark:border-slate-800"
       >
         <div className="absolute top-0 left-0 w-full h-2 primary-gradient" />
 
@@ -94,7 +172,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isDark, onToggleTheme, onS
         </button>
 
         {/* Brand Header */}
-        <div className="text-center mb-6 pt-2">
+        <div className="text-center mb-5 pt-2">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary text-[10px] font-black uppercase tracking-wider mb-2">
             <Sparkles size={12} /> Célula Despertar
           </div>
@@ -106,34 +184,51 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isDark, onToggleTheme, onS
           </p>
         </div>
 
-        {/* Choose Tab / Options Selector */}
-        <div className="grid grid-cols-2 p-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-2xl mb-6">
+        {/* Fast PWA Installer Banner on Auth Screen */}
+        <PWAInstallButton variant="auth" />
+
+        {/* Choose Tab / Options Selector (3 Tabs) */}
+        <div className="grid grid-cols-3 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-2xl mb-6 gap-1">
           <button
             type="button"
             onClick={() => setActiveTab('member')}
             className={cn(
-              'py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer',
+              'py-2.5 px-2 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer truncate',
               activeTab === 'member'
                 ? 'bg-white dark:bg-slate-900 text-primary shadow-sm'
                 : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             )}
           >
-            <Users size={15} />
-            <span>Sou Membro</span>
+            <Users size={14} />
+            <span>Membro</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('admin')}
+            className={cn(
+              'py-2.5 px-2 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer truncate',
+              activeTab === 'admin'
+                ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-sm'
+                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+            )}
+          >
+            <Shield size={14} />
+            <span>Líder / Admin</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('visitor')}
             className={cn(
-              'py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer',
+              'py-2.5 px-2 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer truncate',
               activeTab === 'visitor'
                 ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-sm'
                 : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             )}
           >
-            <Eye size={15} />
-            <span>Sou Visitante</span>
+            <Eye size={14} />
+            <span>Visitante</span>
           </button>
         </div>
 
@@ -145,39 +240,64 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isDark, onToggleTheme, onS
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className="space-y-4"
+              className="space-y-3"
             >
               <div
-                onClick={() => setActiveTab('member')}
-                className="p-4 sm:p-5 rounded-3xl border-2 border-primary/20 hover:border-primary bg-primary/5 dark:bg-primary/10 transition-all cursor-pointer group"
+                onClick={() => setActiveTab('admin')}
+                className="p-4 rounded-3xl border-2 border-amber-500/25 hover:border-amber-500 bg-amber-500/5 dark:bg-amber-500/10 transition-all cursor-pointer group"
               >
-                <div className="flex items-center gap-3.5">
-                  <div className="w-12 h-12 rounded-2xl primary-gradient text-white flex items-center justify-center shrink-0 shadow-md shadow-primary/25 group-hover:scale-105 transition-transform">
-                    <Users size={22} />
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-amber-500/20 group-hover:scale-105 transition-transform">
+                    <Shield size={20} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-display font-bold text-base sm:text-lg text-slate-900 dark:text-white leading-tight">
+                    <div className="flex items-center gap-1.5">
+                      <h3 className="font-display font-bold text-base text-slate-900 dark:text-white leading-tight">
+                        Conta de Líder / Admin
+                      </h3>
+                      <span className="text-[9px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full">
+                        Edição Total
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
+                      Acesso completo para editar lema, devocionais, escalas, membros e avisos.
+                    </p>
+                  </div>
+                  <ArrowRight size={16} className="text-amber-600 group-hover:translate-x-1 transition-transform shrink-0" />
+                </div>
+              </div>
+
+              <div
+                onClick={() => setActiveTab('member')}
+                className="p-4 rounded-3xl border-2 border-primary/20 hover:border-primary bg-primary/5 dark:bg-primary/10 transition-all cursor-pointer group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl primary-gradient text-white flex items-center justify-center shrink-0 shadow-md shadow-primary/25 group-hover:scale-105 transition-transform">
+                    <Users size={20} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-display font-bold text-base text-slate-900 dark:text-white leading-tight">
                       Entrar como Membro
                     </h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
-                      Cadastro rápido para participar do chat, posts na comunidade, jogos e escalas.
+                      Para interagir no chat, postar na comunidade, jogos bíblicos e eventos.
                     </p>
                   </div>
-                  <ArrowRight size={18} className="text-primary group-hover:translate-x-1 transition-transform shrink-0" />
+                  <ArrowRight size={16} className="text-primary group-hover:translate-x-1 transition-transform shrink-0" />
                 </div>
               </div>
 
               <div
                 onClick={() => setActiveTab('visitor')}
-                className="p-4 sm:p-5 rounded-3xl border-2 border-emerald-500/20 hover:border-emerald-500 bg-emerald-500/5 dark:bg-emerald-500/10 transition-all cursor-pointer group"
+                className="p-4 rounded-3xl border-2 border-emerald-500/20 hover:border-emerald-500 bg-emerald-500/5 dark:bg-emerald-500/10 transition-all cursor-pointer group"
               >
-                <div className="flex items-center gap-3.5">
-                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-500/25 group-hover:scale-105 transition-transform">
-                    <Eye size={22} />
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-500/25 group-hover:scale-105 transition-transform">
+                    <Eye size={20} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-display font-bold text-base sm:text-lg text-slate-900 dark:text-white leading-tight">
+                    <div className="flex items-center gap-1.5">
+                      <h3 className="font-display font-bold text-base text-slate-900 dark:text-white leading-tight">
                         Acesso Visitante
                       </h3>
                       <span className="text-[9px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full">
@@ -185,16 +305,104 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isDark, onToggleTheme, onS
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
-                      Entrada direta para conhecer nossos devocionais, agenda e locais sem editar nada.
+                      Entrada direta para ler devocionais, agenda e local da célula.
                     </p>
                   </div>
-                  <ArrowRight size={18} className="text-emerald-600 group-hover:translate-x-1 transition-transform shrink-0" />
+                  <ArrowRight size={16} className="text-emerald-600 group-hover:translate-x-1 transition-transform shrink-0" />
                 </div>
               </div>
             </motion.div>
           )}
 
-          {/* TAB 2: CADASTRO SIMPLES DO MEMBRO */}
+          {/* TAB 2: CONTA ADMIN / LÍDER */}
+          {activeTab === 'admin' && (
+            <motion.form
+              key="admin"
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 10 }}
+              onSubmit={handleAdminSubmit}
+              className="space-y-4"
+            >
+              <div className="bg-amber-50 dark:bg-amber-950/40 p-3.5 rounded-2xl border border-amber-200 dark:border-amber-800/40 space-y-1.5">
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wide">
+                  <Shield size={16} /> Acesso de Edição e Liderança
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  Permite editar o <strong>Lema da Célula</strong>, alterar <strong>Devocionais</strong>, gerenciar <strong>Escalas e Eventos</strong>, moderar o Chat e a lista de membros.
+                </p>
+                <div className="pt-1 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                  🔑 Senha padrão de liderança: <code className="bg-amber-100 dark:bg-amber-900/60 px-1.5 py-0.5 rounded font-mono font-bold">admin123</code>
+                </div>
+              </div>
+
+              {adminError && (
+                <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-600 dark:text-red-400 font-semibold">
+                  {adminError}
+                </div>
+              )}
+
+              {/* Nome do Líder */}
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 ml-1">
+                  Seu Nome ou Título de Liderança *
+                </label>
+                <input
+                  type="text"
+                  value={adminName}
+                  onChange={(e) => setAdminName(e.target.value)}
+                  placeholder="Ex: Pastor Rafael, Líder Débora..."
+                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 focus:outline-none focus:border-amber-500 text-sm text-slate-900 dark:text-white font-medium transition-all"
+                  required
+                  autoFocus
+                />
+              </div>
+
+              {/* Senha do Líder */}
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center ml-1">
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Senha de Administrador *
+                  </label>
+                  <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold">
+                    (Use admin123)
+                  </span>
+                </div>
+                <div className="relative">
+                  <Lock size={16} className="absolute left-3.5 top-3.5 text-slate-400" />
+                  <input
+                    type="password"
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    placeholder="Digite admin123"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 focus:outline-none focus:border-amber-500 text-sm text-slate-900 dark:text-white font-medium transition-all"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Botão de Entrar como Admin */}
+              <button
+                type="submit"
+                className="w-full py-4 mt-2 bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 hover:from-amber-500 hover:to-orange-500 text-white font-display text-lg rounded-2xl shadow-lg shadow-amber-600/25 hover:scale-[1.01] active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Shield size={18} />
+                <span>Entrar como Administrador</span>
+              </button>
+
+              {/* Botão de Entrada Rápida Pré-configurada */}
+              <button
+                type="button"
+                onClick={handleQuickAdminLogin}
+                className="w-full py-2.5 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Sparkles size={14} className="text-amber-500" />
+                <span>Entrar direto como "Pastor / Líder da Célula"</span>
+              </button>
+            </motion.form>
+          )}
+
+          {/* TAB 3: CADASTRO SIMPLES DO MEMBRO */}
           {activeTab === 'member' && (
             <motion.form
               key="member"
@@ -271,15 +479,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isDark, onToggleTheme, onS
 
               <button
                 type="button"
-                onClick={() => setActiveTab('visitor')}
+                onClick={() => setActiveTab('admin')}
                 className="w-full text-center text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 font-medium py-1"
               >
-                Apenas visitando? <span className="text-emerald-600 font-bold underline">Entre como visitante</span>
+                É o líder da célula? <span className="text-amber-600 font-bold underline">Entrar como Administrador</span>
               </button>
             </motion.form>
           )}
 
-          {/* TAB 3: ENTRADA DIRETA COMO VISITANTE */}
+          {/* TAB 4: ENTRADA DIRETA COMO VISITANTE */}
           {activeTab === 'visitor' && (
             <motion.div
               key="visitor"

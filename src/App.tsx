@@ -20,6 +20,7 @@ import Chat from './screens/Chat';
 import Profile from './screens/Profile';
 import { ShareAppModal } from './components/ShareAppModal';
 import { AuthModal } from './components/AuthModal';
+import { PWAInstallButton } from './components/PWAInstallButton';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('home');
@@ -190,6 +191,9 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* 1-Click Fast PWA Install Button */}
+          <PWAInstallButton variant="header" />
+
           {/* Share & Invite App Modal Button */}
           <button 
             onClick={handleOpenShareModal}
@@ -279,12 +283,16 @@ export default function App() {
             <div className="text-left hidden sm:block">
               <p className={cn(
                 "text-[8px] font-black uppercase leading-none",
-                user.role === 'visitor' ? "text-emerald-500 font-bold" : "text-slate-400 dark:text-slate-500"
+                user.role === 'visitor'
+                  ? "text-emerald-500 font-bold"
+                  : user.role === 'admin'
+                  ? "text-amber-500 font-bold"
+                  : "text-slate-400 dark:text-slate-500"
               )}>
-                {user.role === 'visitor' ? 'Visitante' : user.role === 'admin' ? 'Líder' : 'Membro'}
+                {user.role === 'visitor' ? 'Visitante' : user.role === 'admin' ? '🛡️ Admin' : 'Membro'}
               </p>
               <p className="text-[10px] font-display text-slate-900 dark:text-slate-100 leading-none mt-0.5">
-                {user.role === 'visitor' ? 'Modo Leitura' : `${user.points} XP`}
+                {user.role === 'visitor' ? 'Modo Leitura' : user.role === 'admin' ? 'Modo Edição' : `${user.points} XP`}
               </p>
             </div>
           </div>

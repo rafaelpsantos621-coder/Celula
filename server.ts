@@ -96,7 +96,7 @@ const DEFAULT_POSTS = [
   },
 ];
 
-// --- Shared Members API (Real Members Only - No Bots) ---
+// --- Shared Members / Profiles Database API ---
 app.get('/api/members', (_req, res) => {
   const members = readJSONFile<any[]>('members.json', []);
   res.json(members);
@@ -121,11 +121,42 @@ app.post('/api/members', (req, res) => {
     id: memberData.id,
     name: safeName,
     role: memberData.role || 'member',
-    points: typeof memberData.points === 'number' ? memberData.points : 0,
-    avatarUrl: memberData.avatarUrl || '',
-    bio: memberData.bio || '',
-    phone: memberData.phone || '',
-    familyRole: memberData.familyRole || '',
+    points:
+      typeof memberData.points === 'number'
+        ? memberData.points
+        : index >= 0 && typeof members[index].points === 'number'
+        ? members[index].points
+        : 0,
+    gamesPlayed:
+      typeof memberData.gamesPlayed === 'number'
+        ? memberData.gamesPlayed
+        : index >= 0 && typeof members[index].gamesPlayed === 'number'
+        ? members[index].gamesPlayed
+        : 0,
+    avatarUrl:
+      memberData.avatarUrl !== undefined
+        ? memberData.avatarUrl
+        : index >= 0
+        ? members[index].avatarUrl || ''
+        : '',
+    bio:
+      memberData.bio !== undefined
+        ? memberData.bio
+        : index >= 0
+        ? members[index].bio || ''
+        : '',
+    phone:
+      memberData.phone !== undefined
+        ? memberData.phone
+        : index >= 0
+        ? members[index].phone || ''
+        : '',
+    familyRole:
+      memberData.familyRole !== undefined
+        ? memberData.familyRole
+        : index >= 0
+        ? members[index].familyRole || ''
+        : '',
     joinedAt: index >= 0 && members[index].joinedAt ? members[index].joinedAt : Date.now(),
     lastActive: Date.now(),
   };
@@ -135,10 +166,30 @@ app.post('/api/members', (req, res) => {
     updated = [...members];
     updated[index] = { ...updated[index], ...memberToSave };
   } else {
-    updated = [...members, memberToSave];
+    updated = [memberToSave, ...members];
   }
 
   writeJSONFile('members.json', updated);
+
+  // Also catalog profile image if provided
+  if (memberToSave.avatarUrl && !memberToSave.avatarUrl.includes('dicebear')) {
+    const images = readJSONFile<any[]>('images_db.json', []);
+    const existsImg = images.some((img) => img.url === memberToSave.avatarUrl);
+    if (!existsImg) {
+      const imgEntry = {
+        id: `img_prof_${memberToSave.id}_${Date.now()}`,
+        title: `Foto de Perfil - ${memberToSave.name}`,
+        url: memberToSave.avatarUrl,
+        dataUrl: memberToSave.avatarUrl.startsWith('data:') ? memberToSave.avatarUrl : undefined,
+        category: 'profile',
+        uploadedBy: memberToSave.id,
+        uploadedByName: memberToSave.name,
+        createdAt: Date.now(),
+      };
+      writeJSONFile('images_db.json', [imgEntry, ...images]);
+    }
+  }
+
   res.status(200).json(memberToSave);
 });
 
@@ -148,6 +199,158 @@ app.delete('/api/members/:id', (req, res) => {
   const updated = members.filter((m) => m.id !== id);
   writeJSONFile('members.json', updated);
   res.json({ success: true, count: updated.length });
+});
+
+// --- Game History & Scores Database API ---
+app.get('/api/game-history', (_req, res) => {
+  const history = readJSONFile<any[]>('game_history.json', []);
+  res.json(history);
+});
+
+app.post('/api/game-history', (req, res) => {
+  const entry = req.body;
+  if (!entry || !entry.userId || !entry.gameType) {
+    return res.status(400).json({ error: 'Dados da partida incompletos' });
+  }
+
+  const history = readJSONFile<any[]>('game_history.json', []);
+  const score = typeof entry.score === 'number' ? entry.score : 0;
+
+  // Update member profile points and gamesPlayed in members.json
+  const members = readJSONFile<any[]>('members.json', []);
+  const mIdx = members.findIndex((m) => m.id === entry.userId);
+  let totalPointsAfter = typeof entry.totalPointsAfter === 'number' ? entry.totalPointsAfter : score;
+
+  if (mIdx >= 0) {
+    const currentPoints = typeof members[mIdx].points === 'number' ? members[mIdx].points : 0;
+    const newPoints = Math.max(currentPoints + score, totalPointsAfter);
+    totalPointsAfter = newPoints;
+    members[mIdx] = {
+      ...members[mIdx],
+      name: entry.userName || members[mIdx].name,
+      avatarUrl: entry.userAvatarUrl || members[mIdx].avatarUrl,
+      points: newPoints,
+      gamesPlayed: (members[mIdx].gamesPlayed || 0) + 1,
+      lastActive: Date.now(),
+    };
+    writeJSONFile('members.json', members);
+  } else if (entry.userName && entry.role !== 'visitor') {
+    const newMember = {
+      id: entry.userId,
+      name: entry.userName,
+      role: entry.role || 'member',
+      points: totalPointsAfter,
+      gamesPlayed: 1,
+      avatarUrl: entry.userAvatarUrl || '',
+      joinedAt: Date.now(),
+      lastActive: Date.now(),
+    };
+    writeJSONFile('members.json', [newMember, ...members]);
+  }
+
+  const savedEntry = {
+    id: entry.id || `gh_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    userId: entry.userId,
+    userName: entry.userName || 'Membro',
+    userAvatarUrl: entry.userAvatarUrl || '',
+    gameType: entry.gameType,
+    gameTitle: entry.gameTitle || entry.gameType,
+    score,
+    totalPointsAfter,
+    playedAt: entry.playedAt || Date.now(),
+  };
+
+  const updatedHistory = [savedEntry, ...history.filter((h) => h.id !== savedEntry.id)].slice(0, 500);
+  writeJSONFile('game_history.json', updatedHistory);
+  res.status(201).json(savedEntry);
+});
+
+app.delete('/api/game-history/:id', (req, res) => {
+  const { id } = req.params;
+  const history = readJSONFile<any[]>('game_history.json', []);
+  const updated = history.filter((h) => h.id !== id);
+  writeJSONFile('game_history.json', updated);
+  res.json({ success: true, count: updated.length });
+});
+
+// --- Stored Images Database API ---
+const DEFAULT_IMAGES = [
+  {
+    id: 'img_seed_1',
+    title: 'Comunhão Célula Despertar',
+    url: 'https://images.unsplash.com/photo-1544427928-c49cdfebf194?w=800',
+    category: 'gallery',
+    uploadedBy: 'adm1',
+    uploadedByName: 'Liderança',
+    createdAt: Date.now() - 86400000,
+  },
+];
+
+app.get('/api/images', (_req, res) => {
+  const images = readJSONFile<any[]>('images_db.json', DEFAULT_IMAGES);
+  res.json(images);
+});
+
+app.post('/api/images', (req, res) => {
+  const img = req.body;
+  if (!img || (!img.url && !img.dataUrl)) {
+    return res.status(400).json({ error: 'Imagem inválida' });
+  }
+  const images = readJSONFile<any[]>('images_db.json', DEFAULT_IMAGES);
+  const newImage = {
+    id: img.id || `img_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    title: img.title || 'Imagem da Célula',
+    url: img.url || img.dataUrl,
+    dataUrl: img.dataUrl || (img.url?.startsWith('data:') ? img.url : undefined),
+    category: img.category || 'gallery',
+    uploadedBy: img.uploadedBy || 'member',
+    uploadedByName: img.uploadedByName || 'Membro',
+    mimeType: img.mimeType || 'image/jpeg',
+    size: img.size || 0,
+    createdAt: img.createdAt || Date.now(),
+  };
+  const updated = [newImage, ...images.filter((i) => i.id !== newImage.id)];
+  writeJSONFile('images_db.json', updated);
+  res.status(201).json(newImage);
+});
+
+app.delete('/api/images/:id', (req, res) => {
+  const { id } = req.params;
+  const images = readJSONFile<any[]>('images_db.json', DEFAULT_IMAGES);
+  const updated = images.filter((i) => i.id !== id);
+  writeJSONFile('images_db.json', updated);
+  res.json({ success: true, count: updated.length });
+});
+
+// --- Full Database Snapshot & Restore API ---
+app.get('/api/db/snapshot', (_req, res) => {
+  const members = readJSONFile<any[]>('members.json', []);
+  const gameHistory = readJSONFile<any[]>('game_history.json', []);
+  const images = readJSONFile<any[]>('images_db.json', DEFAULT_IMAGES);
+  const posts = readJSONFile<any[]>('posts.json', DEFAULT_POSTS);
+  const events = readJSONFile<any[]>('events.json', []);
+  res.json({
+    version: 1,
+    exportedAt: Date.now(),
+    members,
+    gameHistory,
+    images,
+    posts,
+    events,
+  });
+});
+
+app.post('/api/db/restore', (req, res) => {
+  const data = req.body;
+  if (!data || typeof data !== 'object') {
+    return res.status(400).json({ error: 'Arquivo de backup inválido' });
+  }
+  if (Array.isArray(data.members)) writeJSONFile('members.json', data.members);
+  if (Array.isArray(data.gameHistory)) writeJSONFile('game_history.json', data.gameHistory);
+  if (Array.isArray(data.images)) writeJSONFile('images_db.json', data.images);
+  if (Array.isArray(data.posts)) writeJSONFile('posts.json', data.posts);
+  if (Array.isArray(data.events)) writeJSONFile('events.json', data.events);
+  res.json({ success: true });
 });
 
 // --- Shared Messages API (Clean & Real) ---
@@ -275,6 +478,143 @@ app.post('/api/address', (req, res) => {
   res.json(data);
 });
 
+// --- Shared Banner API (Admin Editable) ---
+const DEFAULT_BANNER = {
+  tag: '✨ Célula Despertar',
+  title: 'Edificando famílias, fortalecendo lares no amor de Cristo.',
+  verse: 'Eu e a minha casa serviremos ao Senhor.',
+  reference: 'Josué 24:15',
+  gradientTheme: 'indigo',
+};
+
+app.get('/api/banner', (_req, res) => {
+  const banner = readJSONFile('banner.json', DEFAULT_BANNER);
+  res.json(banner);
+});
+
+app.post('/api/banner', (req, res) => {
+  const newBanner = req.body;
+  if (!newBanner || !newBanner.title) {
+    return res.status(400).json({ error: 'Título é obrigatório' });
+  }
+  const merged = { ...DEFAULT_BANNER, ...newBanner };
+  writeJSONFile('banner.json', merged);
+  res.json(merged);
+});
+
+// --- Quiz Questions API (Admin Editable) ---
+const SEED_QUESTIONS = [
+  {
+    id: 'q1',
+    text: 'Qual o primeiro livro da Bíblia?',
+    options: ['Êxodo', 'Salmos', 'Gênesis', 'Mateus'],
+    correctAnswer: 2,
+    difficulty: 'easy',
+    points: 10,
+  },
+  {
+    id: 'q2',
+    text: 'Quem construiu a arca para salvar sua família do Dilúvio?',
+    options: ['Moisés', 'Noé', 'Abraão', 'Davi'],
+    correctAnswer: 1,
+    difficulty: 'easy',
+    points: 10,
+  },
+  {
+    id: 'q3',
+    text: 'Quem foi o homem conhecido por sua força extraordinária?',
+    options: ['Sansão', 'Gideão', 'Saul', 'Salomão'],
+    correctAnswer: 0,
+    difficulty: 'easy',
+    points: 10,
+  },
+  {
+    id: 'q4',
+    text: 'Quantos discípulos Jesus escolheu inicialmente?',
+    options: ['7', '10', '12', '14'],
+    correctAnswer: 2,
+    difficulty: 'easy',
+    points: 10,
+  },
+  {
+    id: 'q5',
+    text: 'Quem derrotou o gigante Golias com apenas uma funda e pedra?',
+    options: ['Davi', 'Salomão', 'Josué', 'Jônatas'],
+    correctAnswer: 0,
+    difficulty: 'easy',
+    points: 10,
+  },
+  {
+    id: 'q6',
+    text: 'Em qual cidade Jesus nasceu?',
+    options: ['Nazaré', 'Jerusalém', 'Belém', 'Cafarnaum'],
+    correctAnswer: 2,
+    difficulty: 'medium',
+    points: 20,
+  },
+  {
+    id: 'q7',
+    text: 'Qual apóstolo negou Jesus três vezes antes de o galo cantar?',
+    options: ['João', 'Pedro', 'Judas', 'Tomé'],
+    correctAnswer: 1,
+    difficulty: 'medium',
+    points: 20,
+  },
+  {
+    id: 'q8',
+    text: 'Quem foi engolido por um grande peixe após fugir de Deus?',
+    options: ['Elias', 'Jonas', 'Isaías', 'Jeremias'],
+    correctAnswer: 1,
+    difficulty: 'easy',
+    points: 10,
+  },
+];
+
+app.get('/api/quiz-questions', (_req, res) => {
+  const questions = readJSONFile('quiz_questions.json', SEED_QUESTIONS);
+  res.json(questions);
+});
+
+app.post('/api/quiz-questions', (req, res) => {
+  const question = req.body;
+  if (!question || !question.text || !Array.isArray(question.options)) {
+    return res.status(400).json({ error: 'Questão incompleta' });
+  }
+  const questions = readJSONFile<any[]>('quiz_questions.json', SEED_QUESTIONS);
+  const index = questions.findIndex((q) => q.id === question.id);
+  let updated;
+  if (index >= 0) {
+    updated = [...questions];
+    updated[index] = { ...updated[index], ...question };
+  } else {
+    updated = [question, ...questions];
+  }
+  writeJSONFile('quiz_questions.json', updated);
+  res.status(201).json(question);
+});
+
+app.delete('/api/quiz-questions/:id', (req, res) => {
+  const { id } = req.params;
+  const questions = readJSONFile<any[]>('quiz_questions.json', SEED_QUESTIONS);
+  const updated = questions.filter((q) => q.id !== id);
+  writeJSONFile('quiz_questions.json', updated);
+  res.json({ success: true, count: updated.length });
+});
+
+// Update Post (e.g. pinned by admin or content edit)
+app.put('/api/posts/:id', (req, res) => {
+  const { id } = req.params;
+  const patch = req.body;
+  const posts = readJSONFile<any[]>('posts.json', DEFAULT_POSTS);
+  const index = posts.findIndex((p) => p.id === id);
+  if (index >= 0) {
+    posts[index] = { ...posts[index], ...patch };
+    writeJSONFile('posts.json', posts);
+    return res.json(posts[index]);
+  }
+  res.status(404).json({ error: 'Post não encontrado' });
+});
+
 // Upload API route
 app.post('/api/upload', (req, res) => {
   upload.single('file')(req, res, (err) => {
@@ -370,6 +710,13 @@ const getAIClient = () => {
 
 async function generateDevotional(): Promise<Devotional> {
   const today = new Date().toDateString();
+
+  // Check if admin has set a custom devotional for today
+  const customDev = readJSONFile<any>('custom_devotional.json', null);
+  if (customDev && customDev.date === today && customDev.verse) {
+    return customDev;
+  }
+
   if (serverCachedDevotional && serverCachedDevotional.date === today) {
     return serverCachedDevotional.data;
   }
@@ -430,6 +777,25 @@ app.get('/api/devotional', async (_req, res) => {
   }
 });
 
+app.post('/api/devotional/custom', (req, res) => {
+  const { verse, reference, reflection } = req.body;
+  if (!verse || !reference || !reflection) {
+    return res.status(400).json({ error: 'Campos incompletos' });
+  }
+  const today = new Date().toDateString();
+  const custom = {
+    date: today,
+    verse,
+    reference,
+    reflection,
+    cachedAt: Date.now(),
+    isCustom: true,
+  };
+  serverCachedDevotional = { date: today, data: custom };
+  writeJSONFile('custom_devotional.json', custom);
+  res.json(custom);
+});
+
 const SERVER_VERSES = [
   { id: 'v1', verse: 'Eu e a minha casa serviremos ao Senhor.', reference: 'Josué 24:15', theme: 'Família & Aliança' },
   { id: 'v2', verse: 'O Senhor é o meu pastor; nada me faltará.', reference: 'Salmos 23:1', theme: 'Provisão & Cuidado' },
@@ -454,6 +820,11 @@ app.get('/api/verse-of-the-day', (_req, res) => {
 // Serve static public folder (favicon, og-image, manifest)
 app.use(express.static(path.resolve(__dirname, 'public')));
 
+// Fast installer alias routes that trigger the automatic PWA installer modal
+app.get(['/instalar', '/baixar', '/install', '/download'], (_req, res) => {
+  res.redirect('/?instalar=1');
+});
+
 // Convenient alias routes for members accessing friendly paths
 app.get(
   [
@@ -477,7 +848,11 @@ async function startServer() {
     });
   } else {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        watch: null,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

@@ -13,6 +13,7 @@ export interface Devotional {
   reflection: string;
   cachedAt?: number;
   isOffline?: boolean;
+  isCustom?: boolean;
 }
 
 export const FALLBACK_DEVOTIONALS: Devotional[] = [

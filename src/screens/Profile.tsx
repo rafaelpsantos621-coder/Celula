@@ -17,54 +17,17 @@ import {
   UserCheck,
   Phone,
   Home,
+  KeyRound,
+  Sparkles,
+  Lock,
+  X,
+  Database,
 } from 'lucide-react';
-import { User as UserType } from '../types';
+import { User as UserType, CellMember } from '../types';
 import { cn } from '../lib/utils';
 import { getSupabase } from '../lib/supabase';
-
-/**
- * Compresses an image file client-side using an HTML canvas
- * Ensures fast loading, smooth responsiveness, and prevents storage quota overflow.
- */
-function compressImage(file: File, maxWidth = 450, maxHeight = 450, quality = 0.85): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > maxWidth) {
-            height = Math.round((height * maxWidth) / width);
-            width = maxWidth;
-          }
-        } else {
-          if (height > maxHeight) {
-            width = Math.round((width * maxHeight) / height);
-            height = maxHeight;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(e.target?.result as string);
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', quality));
-      };
-      img.onerror = () => reject(new Error('Erro ao decodificar a imagem'));
-      img.src = e.target?.result as string;
-    };
-    reader.onerror = () => reject(new Error('Erro ao ler arquivo da foto'));
-    reader.readAsDataURL(file);
-  });
-}
+import { DatabaseModal } from '../components/DatabaseModal';
+import { uploadAndSaveImageToDB, saveProfileToDB } from '../lib/cellDatabase';
 
 export default function Profile({
   user,
@@ -82,6 +45,7 @@ export default function Profile({
   const [phone, setPhone] = useState(user.phone || '');
   const [familyRole, setFamilyRole] = useState(user.familyRole || 'Membro da Célula');
   const [role, setRole] = useState(user.role);
+  const [showDBModal, setShowDBModal] = useState(false);
 
   // Filter out any legacy illustrated avatars (dicebear)
   const initialPhoto =
@@ -92,6 +56,47 @@ export default function Profile({
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [photoNotice, setPhotoNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Admin Switcher
+  const [showAdminPinModal, setShowAdminPinModal] = useState(false);
+  const [adminPin, setAdminPin] = useState('');
+  const [adminPinError, setAdminPinError] = useState('');
+
+  const handleActivateAdmin = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = adminPin.trim().toLowerCase();
+    if (clean !== 'admin123' && clean !== 'despertar2026' && clean !== '1234') {
+      setAdminPinError('Senha incorreta. A senha padrão do líder é: admin123');
+      return;
+    }
+
+    setRole('admin');
+    const updated: UserType = {
+      ...user,
+      role: 'admin',
+      familyRole: 'Pastor / Líder',
+      bio: user.bio || 'Liderança da Célula • Acesso Total de Edição',
+      points: Math.max(user.points, 100),
+    };
+    onUpdate(updated);
+    localStorage.setItem('cell_user', JSON.stringify(updated));
+    saveProfileToDB(updated).catch(() => {});
+    setShowAdminPinModal(false);
+    setAdminPin('');
+    setAdminPinError('');
+  };
+
+  const handleDemoteToMember = () => {
+    setRole('member');
+    const updated: UserType = {
+      ...user,
+      role: 'member',
+      familyRole: familyRole === 'Pastor / Líder' ? 'Membro da Célula' : familyRole,
+    };
+    onUpdate(updated);
+    localStorage.setItem('cell_user', JSON.stringify(updated));
+    saveProfileToDB(updated).catch(() => {});
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -127,35 +132,17 @@ export default function Profile({
     setPhotoNotice(null);
 
     try {
-      let finalAvatarUrl = '';
+      const savedImg = await uploadAndSaveImageToDB({
+        file,
+        title: `Foto de Perfil - ${name || user.name}`,
+        category: 'profile',
+        user,
+      });
 
-      // 1. First attempt: upload to server endpoint /api/upload
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.url) {
-            finalAvatarUrl = data.url;
-          }
-        }
-      } catch {
-        // Server endpoint unreachable or offline; fallback to compressed data URL
-      }
-
-      // 2. Resilient fallback: compress and store as optimized base64
-      if (!finalAvatarUrl) {
-        finalAvatarUrl = await compressImage(file, 450, 450, 0.85);
-      }
-
+      const finalAvatarUrl = savedImg.dataUrl || savedImg.url;
       setAvatarUrl(finalAvatarUrl);
 
-      // Automatically update profile state and localStorage
+      // Automatically update profile state, localStorage, and DB
       const updatedUser: UserType = {
         ...user,
         name,
@@ -163,6 +150,7 @@ export default function Profile({
         avatarUrl: finalAvatarUrl,
       };
       onUpdate(updatedUser);
+      await saveProfileToDB(updatedUser);
       try {
         localStorage.setItem('cell_user', JSON.stringify(updatedUser));
       } catch {
@@ -171,7 +159,7 @@ export default function Profile({
 
       setPhotoNotice({
         type: 'success',
-        message: 'Foto de perfil adicionada com sucesso!',
+        message: 'Foto salva no perfil e no Banco de Dados!',
       });
 
       setTimeout(() => {
@@ -199,6 +187,7 @@ export default function Profile({
       avatarUrl: undefined,
     };
     onUpdate(updatedUser);
+    saveProfileToDB(updatedUser).catch(() => {});
     try {
       localStorage.setItem('cell_user', JSON.stringify(updatedUser));
     } catch {
@@ -211,6 +200,28 @@ export default function Profile({
     setTimeout(() => {
       setPhotoNotice(null);
     }, 3000);
+  };
+
+  const handleSwitchProfile = (member: CellMember) => {
+    const switchedUser: UserType = {
+      id: member.id,
+      name: member.name,
+      role: member.role,
+      points: member.points || 0,
+      avatarUrl: member.avatarUrl,
+      bio: member.bio,
+      phone: member.phone,
+      familyRole: member.familyRole,
+      joinedAt: member.joinedAt,
+    };
+    setName(switchedUser.name);
+    setBio(switchedUser.bio || '');
+    setPhone(switchedUser.phone || '');
+    setFamilyRole(switchedUser.familyRole || 'Membro da Célula');
+    setRole(switchedUser.role);
+    setAvatarUrl(switchedUser.avatarUrl || '');
+    onUpdate(switchedUser);
+    localStorage.setItem('cell_user', JSON.stringify(switchedUser));
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -415,6 +426,75 @@ export default function Profile({
           </span>
         </div>
 
+        {user.role === 'admin' && (
+          <div className="mt-4 p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-amber-500/10 via-orange-500/10 to-amber-500/15 border border-amber-500/30 text-left space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300 font-bold text-xs uppercase tracking-wider">
+                <Shield size={16} /> Conta de Administrador Ativa
+              </div>
+              <span className="text-[9px] bg-amber-500 text-white font-black px-2 py-0.5 rounded-full uppercase">
+                Edição Total
+              </span>
+            </div>
+            
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-snug">
+              Com esta conta você tem acesso exclusivo para editar todas as páginas da Célula Despertar:
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-700 dark:text-slate-200">
+              <div className="flex items-center gap-1.5 p-2 bg-white/60 dark:bg-slate-800/60 rounded-xl">
+                <span>✨</span> <strong>Início:</strong> Editar Banner & Devocional
+              </div>
+              <div className="flex items-center gap-1.5 p-2 bg-white/60 dark:bg-slate-800/60 rounded-xl">
+                <span>📅</span> <strong>Agenda:</strong> Eventos & Escalas
+              </div>
+              <div className="flex items-center gap-1.5 p-2 bg-white/60 dark:bg-slate-800/60 rounded-xl">
+                <span>📌</span> <strong>Comunidade:</strong> Fixar Comunicados & Moderar
+              </div>
+              <div className="flex items-center gap-1.5 p-2 bg-white/60 dark:bg-slate-800/60 rounded-xl">
+                <span>🧠</span> <strong>Quizzes:</strong> Adicionar Perguntas Bíblicas
+              </div>
+            </div>
+
+            <div className="pt-1 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={handleDemoteToMember}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-[11px] font-bold cursor-pointer underline underline-offset-2"
+              >
+                Alternar para Modo Membro Comum (Teste)
+              </button>
+            </div>
+          </div>
+        )}
+
+        {user.role !== 'admin' && (
+          <div className="mt-4 p-4 rounded-3xl bg-slate-100/70 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 text-left">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-slate-800 dark:text-slate-200 font-bold text-xs uppercase tracking-wider">
+                <Shield size={16} className="text-amber-500" /> Acesso de Liderança
+              </div>
+              <span className="text-[9px] text-amber-600 dark:text-amber-400 font-bold">
+                (Senha: admin123)
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 mb-3 leading-snug">
+              É líder ou pastor da célula? Ative a conta de administrador para ter acesso total de edição das páginas.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setShowAdminPinModal(true);
+                setAdminPin('');
+                setAdminPinError('');
+              }}
+              className="w-full py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl text-xs font-bold shadow-md shadow-amber-600/20 active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <KeyRound size={14} /> Ativar Modo Administrador
+            </button>
+          </div>
+        )}
+
         {user.role === 'visitor' && (
           <div className="mt-4 p-4 rounded-3xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/40 text-left">
             <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-bold text-xs uppercase tracking-wider mb-1">
@@ -538,6 +618,14 @@ export default function Profile({
       </section>
 
       <section className="border-t dark:border-slate-800 pt-8 space-y-3">
+        <button
+          onClick={() => setShowDBModal(true)}
+          type="button"
+          className="w-full py-4 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all cursor-pointer border border-indigo-500/20"
+        >
+          <Database size={18} /> Banco de Dados (Perfis, Jogos & Imagens)
+        </button>
+
         {onOpenShare && (
           <button
             onClick={onOpenShare}
@@ -555,6 +643,87 @@ export default function Profile({
           <LogOut size={18} /> Sair da Conta
         </button>
       </section>
+
+      <DatabaseModal
+        isOpen={showDBModal}
+        onClose={() => setShowDBModal(false)}
+        user={user}
+        initialTab="profiles"
+        onSwitchProfile={handleSwitchProfile}
+      />
+
+      {/* Modal: Ativar Modo Administrador via Senha */}
+      <AnimatePresence>
+        {showAdminPinModal && (
+          <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md z-[60] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl sm:rounded-[2.5rem] shadow-2xl w-full max-w-sm relative border border-slate-100 dark:border-slate-800"
+            >
+              <button
+                onClick={() => setShowAdminPinModal(false)}
+                className="absolute top-6 right-6 w-8 h-8 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                  <Shield size={20} />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-lg text-slate-900 dark:text-white leading-tight">
+                    Acesso de Administrador
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Edição total das páginas da célula
+                  </p>
+                </div>
+              </div>
+
+              {adminPinError && (
+                <div className="mb-4 p-3 rounded-2xl bg-red-50 dark:bg-red-950/30 border border-red-200 text-xs text-red-600 flex items-center gap-2">
+                  <AlertCircle size={16} className="shrink-0" />
+                  <span>{adminPinError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleActivateAdmin} className="space-y-4">
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center ml-1">
+                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                      Senha de Líder
+                    </label>
+                    <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                      (Use: admin123)
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <Lock size={16} className="absolute left-3.5 top-3.5 text-slate-400" />
+                    <input
+                      type="password"
+                      autoFocus
+                      value={adminPin}
+                      onChange={(e) => setAdminPin(e.target.value)}
+                      placeholder="Digite admin123"
+                      className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 text-sm font-medium text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-3.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-sm rounded-2xl shadow-lg shadow-amber-600/25 active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Shield size={16} /> Entrar como Administrador
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

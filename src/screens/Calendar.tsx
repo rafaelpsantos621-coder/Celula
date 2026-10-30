@@ -218,6 +218,21 @@ export default function Calendar({ user }: { user: User }) {
         </div>
       </div>
 
+      {user.role === 'admin' && (
+        <div className="bg-amber-500/10 border border-amber-500/25 px-4 py-2.5 rounded-2xl flex items-center justify-between gap-3 text-xs font-bold text-amber-700 dark:text-amber-300">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+            <span>Edição de Agenda: Você pode criar eventos oficiais, definir escalas de lanche/louvor/palavra e excluir encontros.</span>
+          </div>
+          <button
+            onClick={() => setShowAddEvent(true)}
+            className="py-1 px-3 bg-amber-500 text-white rounded-xl text-xs font-bold hover:bg-amber-600 transition-all shrink-0 cursor-pointer"
+          >
+            + Novo Evento
+          </button>
+        </div>
+      )}
+
       <div className="bg-white dark:bg-slate-900 p-4 sm:p-8 rounded-3xl sm:rounded-[2.5rem] shadow-xl shadow-slate-200/50 dark:shadow-none border border-slate-100 dark:border-slate-800">
         <div className="text-center mb-6 sm:mb-8">
           <h3 className="font-display text-xl sm:text-2xl text-slate-900 dark:text-white italic">

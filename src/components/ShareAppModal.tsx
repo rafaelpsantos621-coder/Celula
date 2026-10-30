@@ -14,7 +14,9 @@ import {
   CheckCircle2,
   XCircle,
   MessageCircle,
+  Download,
 } from 'lucide-react';
+import { usePWAInstall } from '../hooks/usePWAInstall';
 
 interface ShareAppModalProps {
   isOpen: boolean;
@@ -25,6 +27,7 @@ export const ShareAppModal: React.FC<ShareAppModalProps> = ({ isOpen, onClose })
   const [copiedType, setCopiedType] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'share' | 'domain' | 'bitly' | 'install'>('share');
   const [customInput, setCustomInput] = useState('Célula Despertar');
+  const { isInstallable, isInstalled, install, installerUrl } = usePWAInstall();
 
   // Determine current active URL safely (clean URL without hash or extra query)
   const currentUrl =
@@ -32,7 +35,7 @@ export const ShareAppModal: React.FC<ShareAppModalProps> = ({ isOpen, onClose })
       ? `${window.location.protocol}//${window.location.host}`
       : 'https://celuladespertar.com';
 
-  const defaultMessage = `✨ Olá, família da Célula Despertar!\n\nEste é o nosso aplicativo oficial para estarmos juntos durante a semana: devocionais diários, avisos, pedidos de oração, chat e comunhão.\n\nAcesse pelo link oficial:\n${currentUrl}\n\n(Dica: salve na tela inicial do seu celular para usar como aplicativo!)`;
+  const defaultMessage = `✨ Olá, família da Célula Despertar!\n\nEste é o nosso aplicativo oficial para estarmos juntos durante a semana: devocionais diários (mesmo offline), avisos, pedidos de oração, chat e comunhão.\n\n📲 *Link Instalador Rápido (abre e instala no celular):*\n${installerUrl}\n\n🔗 *Acesso direto:*\n${currentUrl}`;
 
   // Sanitizer for Bitly slugs: removes accents, converts to lowercase, replaces spaces with hyphens
   const sanitizeSlug = (text: string) => {
@@ -55,14 +58,10 @@ export const ShareAppModal: React.FC<ShareAppModalProps> = ({ isOpen, onClose })
     }
   };
 
-  const handleWhatsAppShare = () => {
-    const encoded = encodeURIComponent(defaultMessage);
-    const whatsappUrl = `https://api.whatsapp.com/send?text=${encoded}`;
-    window.open(whatsappUrl, '_blank');
-  };
+  const whatsappShareHref = `https://api.whatsapp.com/send?text=${encodeURIComponent(defaultMessage)}`;
 
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=10&data=${encodeURIComponent(
-    currentUrl
+    installerUrl
   )}`;
 
   return (
@@ -155,63 +154,67 @@ export const ShareAppModal: React.FC<ShareAppModalProps> = ({ isOpen, onClose })
             <div className="p-5 sm:p-6 space-y-5 max-h-[70vh] overflow-y-auto">
               {/* TAB 1: WhatsApp & QR Code */}
               {activeTab === 'share' && (
-                <div className="space-y-5">
-                  {/* Notice about direct link and activation */}
-                  <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-2xl p-3.5 flex items-start gap-3">
-                    <AlertTriangle size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                    <div className="text-xs">
-                      <p className="font-bold text-amber-900 dark:text-amber-200">
-                        Como liberar o acesso para todos os membros:
-                      </p>
-                      <p className="text-amber-800 dark:text-amber-300 mt-1 leading-relaxed">
-                        No canto superior direito da tela do <strong>Google AI Studio</strong>, clique no botão <strong>"Share" (Compartilhar)</strong>. Isso ativa o link público oficial para qualquer irmão abrir sem pedir senha e sem dar erro 404!
-                      </p>
+                <div className="space-y-4">
+                  {/* Fast Installer Link Card */}
+                  <div className="bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950/40 dark:to-slate-900 border-2 border-emerald-500/30 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                          <Download size={16} />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 dark:text-white block leading-tight">
+                            Link Instalador Rápido (1 Clique)
+                          </span>
+                          <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold">
+                            Abre o assistente de instalação automaticamente no celular
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* WhatsApp Quick Action */}
-                  <button
-                    onClick={handleWhatsAppShare}
-                    className="w-full py-3.5 px-4 bg-emerald-500 hover:bg-emerald-600 active:scale-[0.99] text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-500/20 transition-all cursor-pointer"
-                  >
-                    <MessageCircle size={18} />
-                    Enviar Convite no WhatsApp
-                  </button>
-
-                  {/* Short Link Ready to Use */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                        Link Curto Oficial para Membros
-                      </label>
-                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full">
-                        tinyurl.com/24eu8jez
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 bg-emerald-50/50 dark:bg-emerald-950/20 p-1.5 pl-3.5 rounded-2xl border border-emerald-200 dark:border-emerald-800/60">
+                    <div className="flex items-center gap-2 bg-white dark:bg-slate-900 p-1.5 pl-3 rounded-xl border border-emerald-200 dark:border-emerald-800/60">
                       <span className="text-xs font-mono font-bold text-emerald-800 dark:text-emerald-300 truncate flex-1 select-all">
-                        https://tinyurl.com/24eu8jez
+                        {installerUrl}
                       </span>
                       <button
-                        onClick={() => handleCopy('https://tinyurl.com/24eu8jez', 'short_ready')}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
-                          copiedType === 'short_ready'
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                        }`}
+                        onClick={() => handleCopy(installerUrl, 'installer_link')}
+                        className="px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white transition-all shrink-0 cursor-pointer"
                       >
-                        {copiedType === 'short_ready' ? (
+                        {copiedType === 'installer_link' ? (
                           <>
                             <Check size={14} /> Copiado!
                           </>
                         ) : (
                           <>
-                            <Copy size={14} /> Copiar
+                            <Copy size={14} /> Copiar Instalador
                           </>
                         )}
                       </button>
                     </div>
+
+                    {!isInstalled && isInstallable && (
+                      <button
+                        type="button"
+                        onClick={() => install()}
+                        className="w-full py-2.5 px-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 hover:opacity-95 transition-all cursor-pointer"
+                      >
+                        <Download size={14} />
+                        <span>Instalar Agora Neste Aparelho</span>
+                      </button>
+                    )}
                   </div>
+
+                  {/* WhatsApp Quick Action */}
+                  <a
+                    href={whatsappShareHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-3.5 px-4 bg-emerald-500 hover:bg-emerald-600 active:scale-[0.99] text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-500/20 transition-all cursor-pointer"
+                  >
+                    <MessageCircle size={18} />
+                    Enviar Link Instalador no WhatsApp
+                  </a>
 
                   {/* Copy Link Input Bar */}
                   <div className="space-y-1.5">
@@ -248,17 +251,17 @@ export const ShareAppModal: React.FC<ShareAppModalProps> = ({ isOpen, onClose })
                     <div className="p-2 bg-white rounded-xl shadow-md shrink-0">
                       <img
                         src={qrCodeUrl}
-                        alt="QR Code Célula Despertar"
+                        alt="QR Code Instalador Célula Despertar"
                         className="w-28 h-28 object-contain"
                       />
                     </div>
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-center sm:justify-start gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
                         <QrCode size={15} className="text-primary" />
-                        QR Code para a Reunião
+                        QR Code Instalador para a Reunião
                       </div>
                       <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                        Abra na reunião da célula ou projete na TV: os irmãos só precisam apontar a câmera do celular para entrar na hora!
+                        Abra na reunião da célula: os irmãos só precisam apontar a câmera do celular para abrir já com o instalador pronto!
                       </p>
                     </div>
                   </div>

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
-import { User, Event, CellMember } from '../types';
+import { User, Event, CellMember, CellBannerConfig } from '../types';
 import { MOCK_EVENTS } from '../mockData';
 import { generateDailyDevotional, Devotional } from '../services/aiService';
-import { getSyncDevotionalFromCache, getTodayDateKey } from '../lib/devotionalStorage';
+import { getSyncDevotionalFromCache, saveDevotionalToCache, getTodayDateKey } from '../lib/devotionalStorage';
 import { AddressCard } from '../components/dashboard/AddressCard';
 import { DevotionalBanner } from '../components/dashboard/DevotionalBanner';
 import { DevotionalModal } from '../components/dashboard/DevotionalModal';
@@ -11,7 +11,26 @@ import { QuickStatsCard } from '../components/dashboard/QuickStatsCard';
 import { MembersModal } from '../components/dashboard/MembersModal';
 import { EventCard } from '../components/dashboard/EventCard';
 import { EventEditModal } from '../components/dashboard/EventEditModal';
-import { Eye, UserCheck, Sparkles } from 'lucide-react';
+import { BannerEditModal } from '../components/dashboard/BannerEditModal';
+import { DevotionalEditModal } from '../components/dashboard/DevotionalEditModal';
+import { Eye, UserCheck, Sparkles, Edit2, Shield, Settings2 } from 'lucide-react';
+import { cn } from '../lib/utils';
+
+const DEFAULT_BANNER_CONFIG: CellBannerConfig = {
+  tag: '✨ Célula Despertar',
+  title: 'Edificando famílias, fortalecendo lares no amor de Cristo.',
+  verse: 'Eu e a minha casa serviremos ao Senhor.',
+  reference: 'Josué 24:15',
+  gradientTheme: 'indigo',
+};
+
+const GRADIENT_THEME_CLASSES: Record<string, string> = {
+  indigo: 'from-indigo-900 via-primary to-indigo-700',
+  purple: 'from-purple-950 via-purple-700 to-indigo-900',
+  emerald: 'from-emerald-950 via-emerald-700 to-teal-900',
+  amber: 'from-amber-950 via-amber-700 to-orange-800',
+  rose: 'from-rose-950 via-rose-700 to-pink-900',
+};
 
 const DEFAULT_DEVOTIONAL: Devotional = {
   verse: "Eu e a minha casa serviremos ao Senhor.",
@@ -79,6 +98,16 @@ function DashboardComponent({ user, onOpenShare }: DashboardProps) {
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
   const [address, setAddress] = useState<string>(getInitialAddress);
   const [showMembersModal, setShowMembersModal] = useState(false);
+  const [bannerConfig, setBannerConfig] = useState<CellBannerConfig>(() => {
+    try {
+      const saved = localStorage.getItem('cell_banner_config');
+      return saved ? JSON.parse(saved) : DEFAULT_BANNER_CONFIG;
+    } catch {
+      return DEFAULT_BANNER_CONFIG;
+    }
+  });
+  const [showBannerEdit, setShowBannerEdit] = useState(false);
+  const [showDevotionalEdit, setShowDevotionalEdit] = useState(false);
   const [members, setMembers] = useState<CellMember[]>(() => {
     // Current user is always at least 1 real member
     return [
@@ -135,13 +164,23 @@ function DashboardComponent({ user, onOpenShare }: DashboardProps) {
     fetchMembers();
     const membersInterval = setInterval(fetchMembers, 10000);
 
-    // 3. Sync address and events
+    // 3. Sync address, banner, and events
     fetch('/api/address')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data?.address) {
           setAddress(data.address);
           localStorage.setItem('cell_address', data.address);
+        }
+      })
+      .catch(() => {});
+
+    fetch('/api/banner')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.title) {
+          setBannerConfig(data);
+          localStorage.setItem('cell_banner_config', JSON.stringify(data));
         }
       })
       .catch(() => {});
@@ -296,6 +335,23 @@ function DashboardComponent({ user, onOpenShare }: DashboardProps) {
     setShowMembersModal(false);
   }, []);
 
+  const handleSaveBanner = useCallback((newBanner: CellBannerConfig) => {
+    setBannerConfig(newBanner);
+    localStorage.setItem('cell_banner_config', JSON.stringify(newBanner));
+    fetch('/api/banner', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newBanner),
+    }).catch(() => {});
+  }, []);
+
+  const handleSaveCustomDevotional = useCallback((customDev: Devotional) => {
+    setDevotional(customDev);
+    const todayKey = getTodayDateKey();
+    cachedDevotionalSession = { dateKey: todayKey, content: customDev };
+    saveDevotionalToCache(customDev, todayKey, 'curated');
+  }, []);
+
   const isAdmin = useMemo(() => user.role === 'admin', [user.role]);
   const memberCount = useMemo(() => members.length, [members.length]);
 
@@ -326,25 +382,92 @@ function DashboardComponent({ user, onOpenShare }: DashboardProps) {
         onSave={handleUpdateEvent}
       />
 
+      {/* Banner Edit Modal (Admin Exclusivo) */}
+      <BannerEditModal
+        isOpen={showBannerEdit}
+        currentBanner={bannerConfig}
+        onClose={() => setShowBannerEdit(false)}
+        onSave={handleSaveBanner}
+      />
+
+      {/* Devotional Edit Modal (Admin Exclusivo) */}
+      <DevotionalEditModal
+        isOpen={showDevotionalEdit}
+        currentDevotional={devotional}
+        onClose={() => setShowDevotionalEdit(false)}
+        onSave={handleSaveCustomDevotional}
+      />
+
+      {/* Painel do Administrador - Destaque de Edição */}
+      {isAdmin && (
+        <div className="bg-gradient-to-r from-amber-500/15 via-orange-500/15 to-amber-500/15 border border-amber-500/30 p-3 sm:p-4 rounded-2xl flex items-center justify-between gap-3 text-slate-800 dark:text-slate-200">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-sm shadow-amber-500/20">
+              <Shield size={18} />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
+                Conta de Administrador Ativa
+                <span className="text-[9px] bg-amber-500/20 text-amber-700 dark:text-amber-300 font-black px-2 py-0.5 rounded-full uppercase">
+                  Acesso Total de Edição
+                </span>
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Você pode editar o banner, a palavra do dia, a agenda e os membros da célula.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowBannerEdit(true)}
+            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shrink-0 shadow-sm cursor-pointer transition-all active:scale-95"
+            title="Editar texto e cores do banner"
+          >
+            <Edit2 size={12} />
+            <span className="hidden sm:inline">Editar Banner</span>
+          </button>
+        </div>
+      )}
+
       {/* Hero Welcome Banner - Família no propósito */}
-      <div className="bg-gradient-to-br from-indigo-900 via-primary to-indigo-700 text-white p-6 sm:p-7 rounded-[2.5rem] shadow-xl shadow-primary/20 relative overflow-hidden">
+      <div
+        className={cn(
+          'text-white p-6 sm:p-7 rounded-[2.5rem] shadow-xl shadow-primary/20 relative overflow-hidden bg-gradient-to-br transition-all',
+          GRADIENT_THEME_CLASSES[bannerConfig.gradientTheme || 'indigo'] ||
+            GRADIENT_THEME_CLASSES.indigo
+        )}
+      >
         <div className="relative z-10 space-y-2">
           <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="inline-flex items-center gap-2 bg-white/15 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider text-indigo-100 border border-white/15">
-              <span>✨</span> Célula Despertar
+            <div className="inline-flex items-center gap-2 bg-white/15 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider text-white border border-white/15">
+              <span>{bannerConfig.tag || '✨ Célula Despertar'}</span>
             </div>
-            {user.role === 'visitor' && (
-              <span className="inline-flex items-center gap-1 bg-emerald-500/20 backdrop-blur-md px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider text-emerald-200 border border-emerald-400/30">
-                <Eye size={11} /> Acesso Visitante
-              </span>
-            )}
+
+            <div className="flex items-center gap-2">
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setShowBannerEdit(true)}
+                  className="inline-flex items-center gap-1 bg-white/20 hover:bg-white/30 backdrop-blur-md px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider text-white border border-white/25 cursor-pointer transition-all active:scale-95 shadow-sm"
+                  title="Editar Lema, Versículo e Cores do Banner"
+                >
+                  <Edit2 size={11} /> Editar Banner
+                </button>
+              )}
+              {user.role === 'visitor' && (
+                <span className="inline-flex items-center gap-1 bg-emerald-500/20 backdrop-blur-md px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider text-emerald-200 border border-emerald-400/30">
+                  <Eye size={11} /> Acesso Visitante
+                </span>
+              )}
+            </div>
           </div>
           <h2 className="font-display text-2xl sm:text-3xl font-extrabold leading-tight text-white tracking-tight">
-            Edificando famílias, fortalecendo lares no amor de Cristo.
+            {bannerConfig.title}
           </h2>
-          <p className="text-white/85 text-xs sm:text-sm font-medium leading-relaxed max-w-lg">
-            "Eu e a minha casa serviremos ao Senhor." — Josué 24:15
-          </p>
+          {bannerConfig.verse && (
+            <p className="text-white/85 text-xs sm:text-sm font-medium leading-relaxed max-w-lg">
+              "{bannerConfig.verse}" {bannerConfig.reference && `— ${bannerConfig.reference}`}
+            </p>
+          )}
         </div>
         <div className="absolute -right-8 -bottom-8 w-44 h-44 rounded-full bg-white/10 blur-2xl pointer-events-none" />
       </div>
@@ -379,6 +502,8 @@ function DashboardComponent({ user, onOpenShare }: DashboardProps) {
         devotional={devotional}
         onOpenModal={handleOpenDevotional}
         isOffline={isOffline}
+        isAdmin={isAdmin}
+        onEditDevotional={() => setShowDevotionalEdit(true)}
       />
 
       {/* Versículo Bíblico do Dia com Compartilhamento */}

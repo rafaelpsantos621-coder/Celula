@@ -1,9 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { Trophy, Star, ChevronRight, CheckCircle2, ArrowLeft, RefreshCcw, Brain, LayoutGrid, Gamepad2, XCircle, Volume2, VolumeX, Lock, Eye } from 'lucide-react';
-import { User, Question, HangmanLevel, WordSearchLevel } from '../types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Trophy, Star, CheckCircle2, ArrowLeft, RefreshCcw, Brain, LayoutGrid, Gamepad2, Volume2, VolumeX, Lock, Eye, Database, Clock } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+import { User, Question, CellMember, GameHistoryEntry } from '../types';
 import { MOCK_QUESTIONS, MOCK_HANGMAN_LEVELS, MOCK_WORDSEARCH_LEVELS } from '../mockData';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { QuizManagerModal } from '../components/games/QuizManagerModal';
+import { DatabaseModal } from '../components/DatabaseModal';
+import {
+  getProfilesFromDB,
+  getGameHistoryFromDB,
+  recordGameSession,
+} from '../lib/cellDatabase';
 
 type GameMode = 'quiz' | 'memory' | 'hangman' | 'wordsearch';
 
@@ -36,6 +45,87 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
   const [activeGame, setActiveGame] = useState<GameMode | null>(null);
   const [gameState, setGameState] = useState<'lobby' | 'playing' | 'result'>('lobby');
   const [isMuted, setIsMuted] = useState(() => localStorage.getItem('game_muted') === 'true');
+  const [showDBModal, setShowDBModal] = useState(false);
+
+  // Real Database Leaderboard & Match History
+  const [dbMembers, setDbMembers] = useState<CellMember[]>([]);
+  const [gameHistory, setGameHistory] = useState<GameHistoryEntry[]>([]);
+
+  const refreshDatabaseStats = useCallback(async () => {
+    const [profiles, history] = await Promise.all([
+      getProfilesFromDB(),
+      getGameHistoryFromDB(),
+    ]);
+    setDbMembers(profiles);
+    setGameHistory(history);
+  }, []);
+
+  useEffect(() => {
+    refreshDatabaseStats();
+  }, [refreshDatabaseStats, user.points]);
+
+  const handleSaveCompletedGame = async (mode: GameMode, scoreEarned: number) => {
+    const titles: Record<GameMode, string> = {
+      quiz: 'Quiz Bíblico',
+      memory: 'Jogo da Memória',
+      wordsearch: 'Caça-Palavras',
+      hangman: 'Forca Bíblica',
+    };
+    onPointsAdd(scoreEarned);
+    await recordGameSession({
+      user,
+      gameType: mode,
+      gameTitle: titles[mode],
+      score: scoreEarned,
+    });
+    await refreshDatabaseStats();
+  };
+
+  // Dynamic Quiz Questions (Admin can add/edit/delete)
+  const [questions, setQuestions] = useState<Question[]>(() => {
+    try {
+      const saved = localStorage.getItem('cell_quiz_questions');
+      return saved ? JSON.parse(saved) : MOCK_QUESTIONS;
+    } catch {
+      return MOCK_QUESTIONS;
+    }
+  });
+  const [showQuizManager, setShowQuizManager] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/quiz-questions')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setQuestions(data);
+          localStorage.setItem('cell_quiz_questions', JSON.stringify(data));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleAddQuestion = (q: Question) => {
+    const updated = [q, ...questions];
+    setQuestions(updated);
+    localStorage.setItem('cell_quiz_questions', JSON.stringify(updated));
+    fetch('/api/quiz-questions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(q),
+    }).catch(() => {});
+  };
+
+  const handleDeleteQuestion = (id: string) => {
+    const updated = questions.filter((q) => q.id !== id);
+    setQuestions(updated);
+    localStorage.setItem('cell_quiz_questions', JSON.stringify(updated));
+    fetch(`/api/quiz-questions/${id}`, { method: 'DELETE' }).catch(() => {});
+  };
+
+  const handleResetQuestions = () => {
+    setQuestions(MOCK_QUESTIONS);
+    localStorage.setItem('cell_quiz_questions', JSON.stringify(MOCK_QUESTIONS));
+  };
 
   const playSound = (type: keyof typeof SOUNDS) => {
     if (isMuted) return;
@@ -52,7 +142,6 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [quizScore, setQuizScore] = useState(0);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
-  const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy');
 
   // Memory State
   const [memoryLevel, setMemoryLevel] = useState(0);
@@ -75,7 +164,7 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
   const [wsScore, setWsScore] = useState(0);
 
   const handleNextQuiz = () => {
-    const currentQuestion = MOCK_QUESTIONS[currentQuestionIndex];
+    const currentQuestion = questions[currentQuestionIndex] || questions[0];
     const isCorrect = selectedOption === currentQuestion.correctAnswer;
     
     if (isCorrect) playSound('correct');
@@ -84,13 +173,13 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
     const newScore = quizScore + (isCorrect ? currentQuestion.points : 0);
     setQuizScore(newScore);
 
-    if (currentQuestionIndex < MOCK_QUESTIONS.length - 1) {
+    if (currentQuestionIndex < questions.length - 1) {
       setTimeout(() => {
         setCurrentQuestionIndex(i => i + 1);
         setSelectedOption(null);
       }, 300);
     } else {
-      onPointsAdd(newScore);
+      handleSaveCompletedGame('quiz', newScore);
       setTimeout(() => {
         playSound('victory');
         setGameState('result');
@@ -117,22 +206,12 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
         const row = Math.floor(Math.random() * (isHoriz ? size : size - word.length));
         const col = Math.floor(Math.random() * (isHoriz ? size - word.length : size));
         
-        let canPlace = true;
         for (let i = 0; i < word.length; i++) {
           const r = isHoriz ? row : row + i;
           const c = isHoriz ? col + i : col;
-          // Simple check: if spot is already taken by a different character, can't place (or just always place if grid is empty)
-          // Since it's initialization, we just avoid overlaps if they conflict
+          grid[r][c].char = word[i].toUpperCase();
         }
-
-        if (canPlace) {
-          for (let i = 0; i < word.length; i++) {
-            const r = isHoriz ? row : row + i;
-            const c = isHoriz ? col + i : col;
-            grid[r][c].char = word[i].toUpperCase();
-          }
-          placed = true;
-        }
+        placed = true;
       }
     });
 
@@ -169,7 +248,7 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
             initWordSearch(wsLevel + 1);
           }, 1000);
         } else {
-          onPointsAdd(nextScore);
+          handleSaveCompletedGame('wordsearch', nextScore);
           setTimeout(() => {
             playSound('victory');
             setGameState('result');
@@ -223,7 +302,7 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
                 initMemoryGame();
               }, 1000);
             } else {
-              onPointsAdd(nextScore);
+              handleSaveCompletedGame('memory', nextScore);
               setTimeout(() => {
                 playSound('victory');
                 setGameState('result');
@@ -258,7 +337,7 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
             setWrongGuesses([]);
           }, 1500);
         } else {
-          onPointsAdd(nextScore);
+          handleSaveCompletedGame('hangman', nextScore);
           setTimeout(() => {
             playSound('victory');
             setGameState('result');
@@ -271,6 +350,9 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
       const newWrong = [...wrongGuesses, letter];
       setWrongGuesses(newWrong);
       if (newWrong.length >= 6) {
+        if (hangmanScore > 0) {
+          handleSaveCompletedGame('hangman', hangmanScore);
+        }
         setTimeout(() => {
           playSound('defeat');
           setGameState('result');
@@ -296,20 +378,50 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
     setMemoryPoints(0);
   };
 
-  const leaderboard = [
-    { name: 'Lucas Silva', points: 1250 },
-    { name: 'Ana Souza', points: 1100 },
-    { name: 'Pedro Santos', points: 950 },
-    { name: user.name, points: user.points, isCurrentUser: true }
-  ].sort((a, b) => b.points - a.points);
+  // Real Leaderboard from Created Profiles in Database
+  const leaderboard = React.useMemo(() => {
+    const map = new Map<string, { id: string; name: string; points: number; isCurrentUser?: boolean }>();
+    dbMembers.forEach((m) => {
+      map.set(m.id, {
+        id: m.id,
+        name: m.name,
+        points: m.id === user.id ? Math.max(m.points || 0, user.points || 0) : m.points || 0,
+        isCurrentUser: m.id === user.id,
+      });
+    });
+    if (!map.has(user.id)) {
+      map.set(user.id, {
+        id: user.id,
+        name: user.name,
+        points: user.points || 0,
+        isCurrentUser: true,
+      });
+    }
+    return Array.from(map.values()).sort((a, b) => b.points - a.points);
+  }, [dbMembers, user.id, user.name, user.points]);
 
   if (gameState === 'playing') {
+    const handleFinishAndSaveEarly = () => {
+      const currentEarned =
+        activeGame === 'quiz'
+          ? quizScore
+          : activeGame === 'memory'
+          ? memoryPoints
+          : activeGame === 'wordsearch'
+          ? wsScore
+          : hangmanScore;
+      if (activeGame && currentEarned > 0) {
+        handleSaveCompletedGame(activeGame, currentEarned);
+      }
+      resetGame();
+    };
+
     return (
       <div className="space-y-8">
         <div className="flex justify-between items-center text-slate-400 dark:text-slate-500">
           <div className="flex items-center gap-4">
-            <button onClick={resetGame} className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest hover:text-slate-900 dark:hover:text-white transition-colors">
-              <ArrowLeft size={14} /> Abandonar
+            <button onClick={handleFinishAndSaveEarly} className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer">
+              <ArrowLeft size={14} /> Salvar & Sair
             </button>
             <button 
               onClick={() => setIsMuted(!isMuted)} 
@@ -323,7 +435,7 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
               Nível
             </span>
             <span className="font-display text-lg text-slate-900 dark:text-white">
-              {activeGame === 'quiz' ? `${currentQuestionIndex + 1}/${MOCK_QUESTIONS.length}` : 
+              {activeGame === 'quiz' ? `${currentQuestionIndex + 1}/${questions.length}` : 
                activeGame === 'memory' ? `${memoryLevel + 1}/20` : 
                activeGame === 'wordsearch' ? `${wsLevel + 1}/20` : 
                `${hangmanIndex + 1}/20`}
@@ -332,23 +444,27 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
         </div>
 
         <AnimatePresence mode="wait">
-          {activeGame === 'quiz' && (
+          {activeGame === 'quiz' && questions.length > 0 && (
             <motion.div key="quiz" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8">
               <div className="bg-white dark:bg-slate-900 p-10 rounded-[2.5rem] shadow-sm border border-slate-100 dark:border-slate-800 text-center relative overflow-hidden">
                 <div className="absolute top-0 right-0 px-4 py-1 bg-primary/10 rounded-bl-2xl">
-                  <span className="text-[8px] font-black uppercase tracking-widest text-primary">{MOCK_QUESTIONS[currentQuestionIndex].difficulty}</span>
+                  <span className="text-[8px] font-black uppercase tracking-widest text-primary">
+                    {(questions[currentQuestionIndex] || questions[0]).difficulty}
+                  </span>
                 </div>
-                <h3 className="font-display text-3xl text-slate-900 dark:text-white tracking-tight leading-tight">{MOCK_QUESTIONS[currentQuestionIndex].text}</h3>
+                <h3 className="font-display text-3xl text-slate-900 dark:text-white tracking-tight leading-tight">
+                  {(questions[currentQuestionIndex] || questions[0]).text}
+                </h3>
               </div>
               <div className="space-y-4">
-                {MOCK_QUESTIONS[currentQuestionIndex].options.map((option, idx) => (
-                  <button key={idx} onClick={() => setSelectedOption(idx)} className={cn("w-full p-5 flex justify-between items-center rounded-3xl font-bold text-sm border-2 transition-all", selectedOption === idx ? "border-primary bg-primary/5 dark:bg-primary/10 text-primary scale-[1.02]" : "border-white dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 shadow-sm")}>
+                {(questions[currentQuestionIndex] || questions[0]).options.map((option, idx) => (
+                  <button key={idx} onClick={() => setSelectedOption(idx)} className={cn("w-full p-5 flex justify-between items-center rounded-3xl font-bold text-sm border-2 transition-all cursor-pointer", selectedOption === idx ? "border-primary bg-primary/5 dark:bg-primary/10 text-primary scale-[1.02]" : "border-white dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 shadow-sm")}>
                     {option}
                   </button>
                 ))}
               </div>
-              <button disabled={selectedOption === null} onClick={handleNextQuiz} className="w-full py-5 primary-gradient text-white font-display text-xl rounded-2xl shadow-xl shadow-primary/30 disabled:opacity-50">
-                {currentQuestionIndex < MOCK_QUESTIONS.length - 1 ? 'Próxima Pergunta' : 'Ver Resultado'}
+              <button disabled={selectedOption === null} onClick={handleNextQuiz} className="w-full py-5 primary-gradient text-white font-display text-xl rounded-2xl shadow-xl shadow-primary/30 disabled:opacity-50 cursor-pointer">
+                {currentQuestionIndex < questions.length - 1 ? 'Próxima Pergunta' : 'Ver Resultado'}
               </button>
             </motion.div>
           )}
@@ -439,7 +555,9 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
         </motion.div>
         <div>
           <h2 className="font-display text-5xl text-slate-900 dark:text-white italic">Parabéns!</h2>
-          <p className="text-slate-400 font-bold uppercase tracking-widest mt-3 text-[10px]">Desafio concluído com sucesso</p>
+          <p className="text-slate-400 font-bold uppercase tracking-widest mt-3 text-[10px]">
+            Pontuação salva no Banco de Dados da Célula
+          </p>
         </div>
         <div className="bg-white dark:bg-slate-900 p-10 rounded-[3rem] shadow-sm border border-slate-100 dark:border-slate-800 w-full grid grid-cols-2 gap-8">
           <div className="text-center">
@@ -451,7 +569,7 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
             <p className="font-display text-4xl text-slate-900 dark:text-white">{user.points}</p>
           </div>
         </div>
-        <button onClick={resetGame} className="w-full py-5 primary-gradient text-white font-display text-xl rounded-2xl shadow-xl">
+        <button onClick={resetGame} className="w-full py-5 primary-gradient text-white font-display text-xl rounded-2xl shadow-xl cursor-pointer">
           Voltar para Arena
         </button>
       </div>
@@ -462,18 +580,33 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
 
   return (
     <div className="space-y-12">
-      <header className="px-2 flex items-center justify-between">
+      <header className="px-2 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="font-display text-4xl text-slate-900 dark:text-white tracking-tight">Arena Bíblica</h2>
           <p className="text-primary font-bold text-[10px] uppercase tracking-widest">
-            {isVisitor ? 'Visualização de Jogos' : 'Escolha seu jogo'}
+            {isVisitor ? 'Visualização de Jogos' : 'Escolha seu jogo • Salvo no Banco'}
           </p>
         </div>
-        {isVisitor && (
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-200/60 dark:border-emerald-800/40">
-            <Eye size={14} /> Modo Visitante
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowDBModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-xs font-bold border border-indigo-500/20 hover:bg-indigo-500/20 transition-all cursor-pointer"
+            title="Ver histórico completo no banco de dados"
+          >
+            <Database size={14} />
+            <span>Histórico & Banco</span>
+          </button>
+          {user.role === 'admin' && (
+            <button
+              onClick={() => setShowQuizManager(true)}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 text-xs font-bold border border-amber-500/30 hover:bg-amber-500/25 transition-all cursor-pointer shadow-sm active:scale-95"
+              title="Gerenciar perguntas do quiz bíblico"
+            >
+              <Brain size={14} />
+              <span>Quiz (Admin)</span>
+            </button>
+          )}
+        </div>
       </header>
 
       {isVisitor && (
@@ -494,7 +627,7 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
       
       <div className="grid grid-cols-1 gap-6">
         {[
-          { id: 'quiz', title: 'Quiz Bíblico', desc: '20 Níveis • Crescente', icon: Brain, color: 'text-primary' },
+          { id: 'quiz', title: 'Quiz Bíblico', desc: `${questions.length} Perguntas • Salva Histórico`, icon: Brain, color: 'text-primary' },
           { id: 'memory', title: 'Memória', desc: '20 Níveis • Atenção', icon: LayoutGrid, color: 'text-secondary' },
           { id: 'wordsearch', title: 'Caça-Palavras', desc: '20 Níveis • Vocabulário', icon: Star, color: 'text-green-500' },
           { id: 'hangman', title: 'Forca Bíblica', desc: '20 Níveis • Conhecimento', icon: Gamepad2, color: 'text-orange-500' }
@@ -533,24 +666,90 @@ export default function Games({ user, onPointsAdd }: { user: User, onPointsAdd: 
         ))}
       </div>
 
+      {/* Real Hall da Fama from Database */}
       <section>
         <div className="flex items-center justify-between mb-6 px-2">
-          <h2 className="text-xs font-black uppercase tracking-widest text-slate-900 dark:text-white">Hall da Fama</h2>
+          <h2 className="text-xs font-black uppercase tracking-widest text-slate-900 dark:text-white">
+            Hall da Fama (Perfis Reais)
+          </h2>
           <Trophy size={18} className="text-secondary" />
         </div>
         <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-sm border border-slate-100 dark:border-slate-800 overflow-hidden transition-all">
           {leaderboard.map((l, i) => (
-            <div key={l.name} className={cn("p-6 flex items-center justify-between border-b dark:border-slate-800 last:border-0", l.isCurrentUser && "bg-primary/5 dark:bg-primary/10")}>
+            <div key={l.id} className={cn("p-6 flex items-center justify-between border-b dark:border-slate-800 last:border-0", l.isCurrentUser && "bg-primary/5 dark:bg-primary/10")}>
               <div className="flex items-center gap-4">
-                <span className="font-display text-xl text-slate-200 dark:text-slate-800">{i + 1}</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100">{l.name}</span>
+                <span className="font-display text-xl text-slate-300 dark:text-slate-700">{i + 1}</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100">
+                  {l.name} {l.isCurrentUser && <span className="text-[10px] text-primary ml-1">(Você)</span>}
+                </span>
               </div>
               <span className="font-display text-slate-900 dark:text-slate-100">{l.points} XP</span>
             </div>
           ))}
         </div>
       </section>
+
+      {/* Recent Game History from Database */}
+      <section>
+        <div className="flex items-center justify-between mb-4 px-2">
+          <h2 className="text-xs font-black uppercase tracking-widest text-slate-900 dark:text-white">
+            Histórico Recente de Partidas
+          </h2>
+          <button
+            onClick={() => setShowDBModal(true)}
+            className="text-xs font-bold text-primary hover:underline cursor-pointer"
+          >
+            Ver Tudo ({gameHistory.length})
+          </button>
+        </div>
+        <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-sm border border-slate-100 dark:border-slate-800 overflow-hidden">
+          {gameHistory.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-400">
+              Nenhuma partida gravada ainda. Jogue acima para registrar sua pontuação!
+            </div>
+          ) : (
+            gameHistory.slice(0, 6).map((h) => (
+              <div
+                key={h.id}
+                className="p-4 sm:p-5 flex items-center justify-between border-b border-slate-100 dark:border-slate-800 last:border-0"
+              >
+                <div>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white">
+                    {h.userName} <span className="text-xs font-normal text-slate-400">• {h.gameTitle}</span>
+                  </p>
+                  <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+                    <Clock size={11} />
+                    {formatDistanceToNow(h.playedAt, { addSuffix: true, locale: ptBR })}
+                  </p>
+                </div>
+                <span className="font-display font-bold text-emerald-600 dark:text-emerald-400 text-sm">
+                  +{h.score} XP
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      {/* Quiz Manager Modal (Admin Exclusivo) */}
+      <QuizManagerModal
+        isOpen={showQuizManager}
+        questions={questions}
+        onClose={() => setShowQuizManager(false)}
+        onAddQuestion={handleAddQuestion}
+        onDeleteQuestion={handleDeleteQuestion}
+        onResetQuestions={handleResetQuestions}
+      />
+
+      {/* Database Modal */}
+      <DatabaseModal
+        isOpen={showDBModal}
+        onClose={() => setShowDBModal(false)}
+        user={user}
+        initialTab="games"
+      />
     </div>
   );
 }
+
 

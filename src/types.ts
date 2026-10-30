@@ -37,6 +37,15 @@ export interface BlogPost {
   videoUrl?: string;
   audioUrl?: string;
   createdAt: number;
+  isPinned?: boolean;
+}
+
+export interface CellBannerConfig {
+  tag: string;
+  title: string;
+  verse: string;
+  reference: string;
+  gradientTheme?: 'indigo' | 'purple' | 'emerald' | 'amber' | 'rose';
 }
 
 export interface Event {
@@ -95,3 +104,29 @@ export interface WordSearchLevel {
   theme: string;
   words: string[];
 }
+
+export interface GameHistoryEntry {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatarUrl?: string;
+  gameType: 'quiz' | 'memory' | 'wordsearch' | 'hangman';
+  gameTitle: string;
+  score: number;
+  totalPointsAfter: number;
+  playedAt: number;
+}
+
+export interface StoredImage {
+  id: string;
+  title: string;
+  url: string;
+  dataUrl?: string;
+  category: 'profile' | 'blog' | 'chat' | 'gallery';
+  uploadedBy: string;
+  uploadedByName: string;
+  mimeType?: string;
+  size?: number;
+  createdAt: number;
+}
+
